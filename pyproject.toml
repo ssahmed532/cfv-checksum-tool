@@ -1,0 +1,11 @@
+[project]
+name = "cfv-checksum-tool"
+version = "0.1.0"
+description = "Windows CFV checksum file management CLI tool"
+requires-python = ">=3.14"
+dependencies = [
+    "click>=8.1.0",
+]
+
+[project.scripts]
+checksum-file-tool = "checksum_file_tool:cli"
