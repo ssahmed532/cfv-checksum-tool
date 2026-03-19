@@ -93,7 +93,7 @@ def do_verify_checksums(dir_path, checksum_file) -> bool:
 
 @click.group()
 @click.pass_context
-@click.version_option("0.1.0", prog_name="checksum_file_tool")
+@click.version_option("0.2.0", prog_name="checksum_file_tool")
 @click.option("-v", "--verbose", is_flag=True, help="Display verbose output")
 @click.argument(
     "dir_path",
