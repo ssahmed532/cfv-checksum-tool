@@ -254,8 +254,34 @@ def verifyCfvFiles(ctx):
         )
         sys.exit(1)
 
-    click.echo(f"Tested and verified cfv checksums for {countCfvFilesVerified} directories")
-    click.echo(f"Total no. of sub-directories scanned: {countDirsScanned}")
+    if countCfvFilesVerified == countDirsScanned:
+        click.echo(
+            click.style(
+                f"{countCfvFilesVerified} out of {countDirsScanned} sub-directories "
+                f"successfully passed detailed verification and checksum verification.",
+                fg="green",
+                bold=True,
+            )
+        )
+    elif countCfvFilesVerified == 0:
+        click.echo(
+            click.style(
+                f"0 out of {countDirsScanned} sub-directories "
+                f"passed checksum verification. All directories failed.",
+                fg="red",
+                bold=True,
+            )
+        )
+    else:
+        countFailed = countDirsScanned - countCfvFilesVerified
+        click.echo(
+            click.style(
+                f"{countCfvFilesVerified} out of {countDirsScanned} sub-directories "
+                f"passed checksum verification; {countFailed} failed.",
+                fg="yellow",
+                bold=True,
+            )
+        )
 
 
 if __name__ == "__main__":
