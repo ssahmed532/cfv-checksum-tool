@@ -2,6 +2,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #     "click>=8.1.0",
+#     "rich>=15.0.0",
 # ]
 # ///
 #
@@ -28,12 +29,18 @@
 #
 
 import os
-import pprint
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from textwrap import indent
 
 import click
+from rich import pretty
+from rich.console import Console
+from rich.markup import escape
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.text import Text
 
 # The one place the version is set; --version and pyproject.toml (dynamic
 # version) both take it from here. Follows Semantic Versioning, see the
@@ -51,9 +58,17 @@ MODE_NESTED = "nested"
 # laid out, so mode detection ignores them.
 IGNORED_FILES = {"desktop.ini", "thumbs.db"}
 
+# Writes to whatever sys.stdout is at the time, so it picks up the UTF-8
+# reconfiguration in __main__. Highlighting is off so only the styles we ask
+# for are applied (it would otherwise colour numbers and paths at random).
+# soft_wrap stops rich from hard-wrapping long paths at 80 columns when output
+# is redirected to a log file.
+console = Console(highlight=False, soft_wrap=True)
+err_console = Console(stderr=True, highlight=False, soft_wrap=True)
+
 
 def report_error(message):
-    click.echo(click.style(f"ERROR: {message}", fg="red", bold=True), err=True)
+    err_console.print(Text(f"ERROR: {message}", style="bold red"))
 
 
 def exit_with_error(message):
@@ -62,7 +77,7 @@ def exit_with_error(message):
 
 
 def report_warning(message):
-    click.echo(click.style(f"WARNING: {message}", fg="yellow"), err=True)
+    err_console.print(Text(f"WARNING: {message}", style="yellow"))
 
 
 def validate_dir_path(ctx, param, value):
@@ -85,26 +100,74 @@ def validate_dir_path(ctx, param, value):
     return value
 
 
-def run_cfv(args, dir_path) -> bool:
+@contextmanager
+def spinner(text):
+    """Show text (rich markup) with a spinner and the elapsed time until the
+    block ends, then remove it. Only print through `console` inside the block:
+    anything else (e.g. report_error) would be garbled by the spinner. When
+    output is redirected there is no spinner, since rich would leave an empty
+    line in its place.
+    """
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+        disable=not console.is_terminal,
+    ) as progress:
+        progress.add_task(text, total=None)
+        yield
+
+
+def run_cfv(args, dir_path, spinner_text) -> bool:
     """Run cfv.bat with dir_path as the working directory.
 
     Exits if cfv.bat isn't installed, since no command can succeed without it.
     Any other failure to start it (e.g. dir_path is unreadable) only fails this
     one directory, so the remaining sub-directories in nested mode still run.
+
+    spinner_text is shown with a spinner while cfv runs. cfv's output is
+    captured and printed once it finishes (dimmed if cfv succeeded), because
+    cfv writing to the console itself would garble the spinner. The spinner is
+    always gone before this returns or raises, so the caller's messages are
+    never printed into it.
     """
     if not os.path.isfile(CFV_BAT):
         exit_with_error(f"{CFV_BAT} not found; install CFV from https://cfv.sourceforge.net/")
     try:
-        result = subprocess.run([CFV_BAT, *args], cwd=dir_path)
+        with spinner(spinner_text):
+            # stderr goes into the same pipe so cfv's lines stay in order;
+            # errors="replace" because cfv's encoding isn't known.
+            # When its output isn't a terminal, cfv mmaps each whole file instead
+            # of reading it in chunks, which fails in the 32-bit cfv.exe for files
+            # over ~2GB ("Not enough memory resources"); CFV_NOMMAP turns that off.
+            result = subprocess.run(
+                [CFV_BAT, *args],
+                cwd=dir_path,
+                env={**os.environ, "CFV_NOMMAP": "1"},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
+            )
+        if result.stdout.strip():
+            console.print(
+                Text(
+                    indent(result.stdout.rstrip(), "  "),
+                    style="dim" if result.returncode == 0 else "",
+                )
+            )
     except OSError as e:
         report_error(f"Could not run cfv in [{dir_path}]: {e}")
         return False
     return result.returncode == 0
 
 
-def do_calculate_checksums(dir_path) -> bool:
-    """Create <dir_path>\\<dir name>.sha1. Callers only call this when that file
-    doesn't exist yet, so any file there afterwards was written by this run.
+def do_calculate_checksums(dir_path, spinner_text) -> bool:
+    """Create <dir_path>\\<dir name>.sha1, showing spinner_text with a spinner
+    while cfv runs. Callers only call this when that file doesn't exist yet, so
+    any file there afterwards was written by this run.
 
     When cfv fails (e.g. a file is locked) or is interrupted with Ctrl+C, it
     leaves behind an incomplete checksum file listing only the files it could
@@ -115,7 +178,7 @@ def do_calculate_checksums(dir_path) -> bool:
     sha1_checksum_filepath = os.path.join(dir_path, os.path.basename(dir_path)) + SHA1_EXT
     succeeded = False
     try:
-        succeeded = run_cfv(["-C", "-rr", "-t", "sha1"], dir_path)
+        succeeded = run_cfv(["-C", "-rr", "-t", "sha1"], dir_path, spinner_text)
     finally:
         if not succeeded and os.path.exists(sha1_checksum_filepath):
             try:
@@ -129,8 +192,8 @@ def do_calculate_checksums(dir_path) -> bool:
     return succeeded
 
 
-def do_verify_checksums(dir_path, checksum_file) -> bool:
-    return run_cfv(["-f", checksum_file], dir_path)
+def do_verify_checksums(dir_path, checksum_file, spinner_text) -> bool:
+    return run_cfv(["-f", checksum_file], dir_path, spinner_text)
 
 
 def scan_dir(dir_path):
@@ -217,7 +280,7 @@ def resolve_mode(ctx):
     if mode == MODE_FLAT and not dirPath.name:
         exit_with_error(f"'{dirPath}' is a drive root and can't be checksummed as one folder.")
 
-    click.echo(click.style(f"Mode: {mode} ({reason})", fg="cyan"))
+    console.print(Text.assemble("Mode: ", (mode, "bold"), f" ({reason})", style="cyan"))
     if mode == MODE_NESTED and count_files:
         report_warning(
             f"{count_files} files directly inside [{dirPath}] are not "
@@ -257,8 +320,8 @@ def cli(ctx, dir_path, verbose, flat, nested):
 @cli.command("check-context-object")
 @click.pass_context
 def checkContext(ctx):
-    pprint.pprint(type(ctx.obj))
-    pprint.pprint(ctx.obj)
+    pretty.pprint(type(ctx.obj), console=console)
+    pretty.pprint(ctx.obj, console=console)
 
 
 @cli.command("check-4-missing-cfv-files")
@@ -279,21 +342,16 @@ def checkForMissingCfvFiles(ctx):
 
     if resolve_mode(ctx) == MODE_FLAT:
         sha1_checksum_filepath = os.path.join(dirPath, dirPath.name) + SHA1_EXT
-        click.echo()
+        console.print()
         if os.path.exists(sha1_checksum_filepath):
-            click.echo(
-                click.style(
-                    f"\N{check mark} checksum file found for [{dirPath.name}]",
-                    fg="green",
-                    bold=True,
-                )
+            console.print(
+                Text(f"\N{check mark} checksum file found for [{dirPath.name}]", style="bold green")
             )
         else:
-            click.echo(
-                click.style(
+            console.print(
+                Text(
                     f"\N{cross mark} checksum file not found for [{dirPath.name}]",
-                    fg="red",
-                    bold=True,
+                    style="bold red",
                 )
             )
         return
@@ -303,48 +361,62 @@ def checkForMissingCfvFiles(ctx):
     count_dirs_without_checksums = 0
     count_dirs = 0
 
-    with os.scandir(dirPath) as entries:
+    with (
+        # a drive root has no name, so show its path instead
+        spinner(
+            f"Scanning [bold]{escape(f'[{dirPath.name or dirPath}]')}[/] for checksum files ..."
+        ),
+        os.scandir(dirPath) as entries,
+    ):
         for entry in entries:
             if entry.is_dir():
                 count_dirs += 1
                 sha1_checksum_filepath = os.path.join(entry.path, entry.name) + SHA1_EXT
                 if os.path.exists(sha1_checksum_filepath):
                     if verbose:
-                        click.echo(
-                            click.style(
+                        console.print(
+                            Text(
                                 f"\N{check mark} checksum file found for [{entry.name}]",
-                                fg="green",
-                                bold=True,)
+                                style="bold green",
+                            )
                         )
                     count_dirs_with_checksums += 1
                 else:
                     if verbose:
-                        click.echo(
-                            click.style(
+                        console.print(
+                            Text(
                                 f"\N{cross mark} checksum file not found for [{entry.name}]",
-                                fg="red",
-                                bold=True,
+                                style="bold red",
                             )
                         )
                     count_dirs_without_checksums += 1
                     dirs_without_checksums.append(entry.path)
 
-    click.echo()
+    console.print()
     if count_dirs == 0:
-        click.echo(f"No sub-directories found in [{dirPath}], there is nothing to do.")
+        console.print(Text(f"No sub-directories found in [{dirPath}], there is nothing to do."))
     else:
-        click.echo(f"# of directories with CFV files: {count_dirs_with_checksums}")
-        click.echo(f"# of directories without CFV files: {count_dirs_without_checksums}")
-        click.echo()
+        console.print(
+            f"# of directories with CFV files: [bold green]{count_dirs_with_checksums}[/]"
+        )
+        console.print(
+            f"# of directories without CFV files: "
+            f"[bold {'red' if count_dirs_without_checksums else 'green'}]"
+            f"{count_dirs_without_checksums}[/]"
+        )
+        console.print()
 
         if count_dirs_without_checksums == 0:
             assert count_dirs_with_checksums == count_dirs
             assert not dirs_without_checksums
-            click.echo(
-                click.style(
-                    "All checksums appear to be up-to-date: you are all set!",
-                    fg="green",
-                )
+            console.print(
+                "[bold green]\N{check mark} All checksums appear to be up-to-date: "
+                "you are all set![/]"
+            )
+        else:
+            console.print(
+                f"[bold red]\N{cross mark} {count_dirs_without_checksums} directories are "
+                f"missing checksum files; run generate-cfv-files to create them.[/]"
             )
 
 
@@ -363,59 +435,80 @@ def generateCfvFiles(ctx):
     if resolve_mode(ctx) == MODE_FLAT:
         sha1_checksum_filepath = os.path.join(dirPath, dirPath.name) + SHA1_EXT
         if os.path.exists(sha1_checksum_filepath):
-            click.echo(
-                click.style(
+            console.print(
+                Text(
                     f"No cfv file generated; [{dirPath.name}] already has a checksum file",
-                    fg="green",
+                    style="green",
                 )
             )
             return
-        click.echo(f"Generating cfv checksum file for {dirPath} ...")
-        if not do_calculate_checksums(dirPath):
+        if not do_calculate_checksums(
+            dirPath, f"Generating cfv checksum file for [bold]{escape(f'[{dirPath.name}]')}[/] ..."
+        ):
             exit_with_error(f"cfv failed to generate a checksum file for [{dirPath.name}]")
-        click.echo(
-            click.style(f"Generated cfv checksum file {sha1_checksum_filepath}", fg="green")
+        console.print(
+            f"[bold green]\N{check mark}[/] Generated cfv checksum file "
+            f"[green]{escape(sha1_checksum_filepath)}[/]"
         )
         return
 
     countCfvFilesGenerated = 0
     countCfvFilesFailed = 0
-    countDirsScanned = 0
 
     with os.scandir(dirPath) as entries:
-        for entry in entries:
-            if entry.is_dir():
-                countDirsScanned += 1
-                sha1_checksum_filepath = os.path.join(entry.path, entry.name) + SHA1_EXT
-                if not os.path.exists(sha1_checksum_filepath):
-                    click.echo(f"Generating cfv checksum file for {entry.path} ...")
-                    if do_calculate_checksums(entry.path):
-                        countCfvFilesGenerated += 1
-                    else:
-                        # keep going so one bad directory doesn't block the rest
-                        report_error(f"cfv failed to generate a checksum file for [{entry.name}]")
-                        countCfvFilesFailed += 1
+        subdirs = [entry for entry in entries if entry.is_dir()]
+    countDirsScanned = len(subdirs)
+    # listed up front so each spinner can show how far along the run is
+    dirs_to_generate = [
+        entry
+        for entry in subdirs
+        if not os.path.exists(os.path.join(entry.path, entry.name) + SHA1_EXT)
+    ]
 
-        if countCfvFilesGenerated > 0:
-            click.echo(
-                click.style(
-                    f"Generated cfv checksums for {countCfvFilesGenerated} directories",
-                    fg="green",
-                )
+    for i, entry in enumerate(dirs_to_generate, 1):
+        sha1_checksum_filepath = os.path.join(entry.path, entry.name) + SHA1_EXT
+        # checked again right before generating, because another process may have
+        # created it while earlier directories were hashed, and a failed run
+        # deletes whatever checksum file it finds (see do_calculate_checksums)
+        if os.path.exists(sha1_checksum_filepath):
+            continue
+        spinner_text = (
+            f"[dim]({i}/{len(dirs_to_generate)})[/] Generating cfv checksum file for "
+            f"[bold]{escape(f'[{entry.name}]')}[/] ..."
+        )
+        if do_calculate_checksums(entry.path, spinner_text):
+            countCfvFilesGenerated += 1
+            console.print(
+                f"[bold green]\N{check mark}[/] Generated cfv checksum file "
+                f"[green]{escape(sha1_checksum_filepath)}[/]"
             )
-        elif countDirsScanned == 0:
-            click.echo(f"No sub-directories found in [{dirPath}], there is nothing to do.")
-        elif countCfvFilesFailed == 0:
-            click.echo(
-                click.style(
-                    "No cfv files generated; all sub-directories appear to be up-to-date",
-                    fg="green",
-                )
+        else:
+            # keep going so one bad directory doesn't block the rest
+            report_error(f"cfv failed to generate a checksum file for [{entry.name}]")
+            countCfvFilesFailed += 1
+
+    if dirs_to_generate:
+        console.print()
+    if countCfvFilesGenerated > 0:
+        console.print(
+            f"[bold green]\N{check mark} Generated cfv checksums for "
+            f"{countCfvFilesGenerated} directories[/]"
+        )
+    elif countDirsScanned == 0:
+        console.print(Text(f"No sub-directories found in [{dirPath}], there is nothing to do."))
+    elif countCfvFilesFailed == 0:
+        console.print(
+            Text(
+                "No cfv files generated; all sub-directories appear to be up-to-date",
+                style="green",
             )
+        )
 
     if verbose:
-        click.echo(f"Total sub-directories scanned: {countDirsScanned}")
-        click.echo(f"Generated cfv checksums for {countCfvFilesGenerated} directories")
+        console.print(f"Total sub-directories scanned: {countDirsScanned}", style="dim")
+        console.print(
+            f"Generated cfv checksums for {countCfvFilesGenerated} directories", style="dim"
+        )
 
     if countCfvFilesFailed:
         exit_with_error(f"Failed to generate cfv checksums for {countCfvFilesFailed} directories")
@@ -438,67 +531,66 @@ def verifyCfvFiles(ctx):
             exit_with_error(
                 f"No checksum file found for [{dirPath.name}]; run generate-cfv-files first."
             )
-        click.echo(f"Verifying CFV checksum file in {dirPath} ...")
-        if not do_verify_checksums(dirPath, sha1_checksum_filepath):
+        if not do_verify_checksums(
+            dirPath,
+            sha1_checksum_filepath,
+            f"Verifying cfv checksum file for [bold]{escape(f'[{dirPath.name}]')}[/] ...",
+        ):
             exit_with_error(f"[{dirPath.name}] failed checksum verification.")
-        click.echo(
-            click.style(
-                f"[{dirPath.name}] successfully passed checksum verification.",
-                fg="green",
-                bold=True,
+        console.print(
+            Text(
+                f"\N{check mark} [{dirPath.name}] successfully passed checksum verification.",
+                style="bold green",
             )
         )
         return
 
-    countDirsScanned = 0
     countCfvFilesVerified = 0
 
     with os.scandir(dirPath) as entries:
-        for entry in entries:
-            if entry.is_dir():
-                countDirsScanned += 1
-                sha1_checksum_filepath = os.path.join(entry.path, entry.name) + SHA1_EXT
-                if not os.path.exists(sha1_checksum_filepath):
-                    report_error(
-                        f"No checksum file found for [{entry.name}]; run generate-cfv-files first."
-                    )
-                    continue
-                click.echo(f"Verifying CFV checksum file in {entry.path} ...")
-                if do_verify_checksums(entry.path, sha1_checksum_filepath):
-                    countCfvFilesVerified += 1
-                else:
-                    report_error(f"[{entry.name}] failed checksum verification.")
+        subdirs = [entry for entry in entries if entry.is_dir()]
+    countDirsScanned = len(subdirs)
+
+    for i, entry in enumerate(subdirs, 1):
+        sha1_checksum_filepath = os.path.join(entry.path, entry.name) + SHA1_EXT
+        if not os.path.exists(sha1_checksum_filepath):
+            report_error(
+                f"No checksum file found for [{entry.name}]; run generate-cfv-files first."
+            )
+            continue
+        spinner_text = (
+            f"[dim]({i}/{countDirsScanned})[/] Verifying cfv checksum file for "
+            f"[bold]{escape(f'[{entry.name}]')}[/] ..."
+        )
+        if do_verify_checksums(entry.path, sha1_checksum_filepath, spinner_text):
+            countCfvFilesVerified += 1
+            console.print(
+                f"[bold green]\N{check mark}[/] {escape(f'[{entry.name}]')} "
+                f"passed checksum verification"
+            )
+        else:
+            report_error(f"[{entry.name}] failed checksum verification.")
 
     if countDirsScanned == 0:
         exit_with_error(f"No sub-directories found in [{dirPath}], there is nothing to verify.")
 
+    console.print()
     if countCfvFilesVerified == countDirsScanned:
-        click.echo(
-            click.style(
-                f"{countCfvFilesVerified} out of {countDirsScanned} sub-directories "
-                f"successfully passed detailed verification and checksum verification.",
-                fg="green",
-                bold=True,
-            )
+        console.print(
+            f"[bold green]\N{check mark} {countCfvFilesVerified} out of {countDirsScanned} "
+            f"sub-directories successfully passed detailed verification and checksum "
+            f"verification.[/]"
         )
     elif countCfvFilesVerified == 0:
-        click.echo(
-            click.style(
-                f"0 out of {countDirsScanned} sub-directories "
-                f"passed checksum verification. All directories failed.",
-                fg="red",
-                bold=True,
-            )
+        console.print(
+            f"[bold red]\N{cross mark} 0 out of {countDirsScanned} sub-directories "
+            f"passed checksum verification. All directories failed.[/]"
         )
     else:
         countFailed = countDirsScanned - countCfvFilesVerified
-        click.echo(
-            click.style(
-                f"{countCfvFilesVerified} out of {countDirsScanned} sub-directories "
-                f"passed checksum verification; {countFailed} failed.",
-                fg="yellow",
-                bold=True,
-            )
+        console.print(
+            f"[bold yellow]\N{warning sign} {countCfvFilesVerified} out of {countDirsScanned} "
+            f"sub-directories passed checksum verification; {countFailed} failed.[/]"
         )
 
     if countCfvFilesVerified < countDirsScanned:

@@ -32,6 +32,7 @@ Single-file CLI (`checksum_file_tool.py`) built with [Click](https://click.palle
 - **`check-4-missing-cfv-files`**: Checks whether the unit(s) have their `<name>.sha1` file.
 - **`generate-cfv-files`**: For units missing a `.sha1` file, calls `cfv.bat -C -rr -t sha1` (create, recursive, SHA1 type) with the unit as cwd; cfv names the file after the cwd.
 - **`verify-cfv-files`**: For the unit(s), calls `cfv.bat -f <checksum_file>` to verify existing `.sha1` files.
+- **Output**: all output goes through [rich](https://rich.readthedocs.io/): module-level `console` (stdout) and `err_console` (stderr, used only by `report_error`/`report_warning`). `spinner()` shows a transient spinner, which is disabled when output isn't a terminal. `run_cfv` always runs cfv inside one and captures cfv's output (cfv writing to the console would garble it), printing it afterwards. Only print through `console` while a spinner is live, and put all user text in rich markup through `escape()`, or use `Text` (folder names like `Show [2020]` are otherwise parsed as markup).
 
 **Key convention**: Each unit's checksum file is named `<unit_name>.sha1` and lives inside that unit (e.g., `D:\Archive\Movies\Movies.sha1`, `D:\Release\Release.sha1`).
 
@@ -49,6 +50,7 @@ Single-file CLI (`checksum_file_tool.py`) built with [Click](https://click.palle
 - Windows-only (hardcoded `cfv.bat` path, Windows path conventions).
 - Mode detection and nested mode look only one level deep (direct contents of `DIR_PATH`); cfv itself hashes each unit recursively.
 - Error handling is uniform across modes (rules in README.md "Error handling"): use `report_error` / `exit_with_error` / `report_warning`, never raw `sys.exit` or inline `ERROR:` echoes. Per-directory failures in nested mode are reported and the loop continues; the command exits 1 at the end.
+- `run_cfv` sets `CFV_NOMMAP=1`: the installed cfv.exe is 32-bit and, when its output isn't a terminal (always, since it's captured), mmaps whole files, which fails on files over ~2GB. Keep it.
 - `do_calculate_checksums` deletes the incomplete `.sha1` cfv leaves behind on failure/Ctrl+C — keep this, or later runs treat the partial file as complete.
 - `__main__` reconfigures stdout/stderr to UTF-8 (line-buffered) so ✓/❌ don't crash when output is redirected (cp1252 default).
 - No test suite currently exists in this repository.

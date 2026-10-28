@@ -253,14 +253,16 @@ The same rules apply in flat and nested mode:
 
 ## Output and logging
 
-Output can be piped or redirected to a log file, e.g. `uv run checksum_file_tool.py D:\Archive verify-cfv-files > verify.log 2>&1`. The tool writes its own lines as UTF-8 when output is redirected, so the ✓ / ❌ marks and non-English folder names in them are logged correctly. cfv's lines are written by cfv itself in its own encoding. The tool's lines and cfv's output stay in order when both streams go to the same file.
+While a command works, a spinner shows what it is doing and the elapsed time. In nested mode, `generate-cfv-files` and `verify-cfv-files` also show how far along the run is (e.g. `(3/12)`). cfv's own output is printed once it has finished with a directory (dimmed if it succeeded), followed by a green `✓` line or a red `ERROR:` line for that directory.
+
+Output can be piped or redirected to a log file, e.g. `uv run checksum_file_tool.py D:\Archive verify-cfv-files > verify.log 2>&1`. The spinner is left out then. The tool writes its lines as UTF-8 when output is redirected, so the ✓ / ❌ marks and non-English folder names in them are logged correctly. This includes cfv's lines, which the tool captures and re-writes; characters in them that can't be decoded are replaced with `�`. The tool's lines and cfv's output stay in order when both streams go to the same file.
 
 In PowerShell, capturing with `2>&1` into a variable or pipeline reads stdout and stderr separately, so `ERROR:` lines may appear a line or two away from where they happened. Redirecting to a file with `> file 2>&1` doesn't have this problem.
 
 ## Known limitations
 
 - Only the layout directly inside `DIR_PATH` is used for detection; sub-directories of sub-directories are not inspected.
-- cfv's own messages (e.g. `crc does not match`, `Permission denied`, or a cfv traceback when a directory can't be listed) are passed through unchanged.
+- cfv's own messages (e.g. `crc does not match`, `Permission denied`, or a cfv traceback when a directory can't be listed) are passed through unchanged, but only once cfv has finished with that directory, not as cfv finds them.
 
 ## Versioning
 

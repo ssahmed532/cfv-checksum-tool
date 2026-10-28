@@ -6,6 +6,7 @@ description = "Windows CFV checksum file management CLI tool"
 requires-python = ">=3.14"
 dependencies = [
     "click>=8.1.0",
+    "rich>=15.0.0",
 ]
 
 [project.scripts]

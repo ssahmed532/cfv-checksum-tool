@@ -62,29 +62,21 @@ still removes the incomplete checksum file:
 result = subprocess.run([CFV_BAT, *args], cwd=dir_path, timeout=300)
 ```
 
-### SEC-6 [MEDIUM] — Subprocess output is not captured or logged
-`run_cfv` calls `subprocess.run` without `capture_output` or `stdout`/`stderr` pipes,
-so cfv.bat's output goes directly to the terminal and is never captured by the
-script. This has two consequences:
+### SEC-6 [MEDIUM] — Subprocess output is not logged or filtered
+`run_cfv` captures cfv.bat's output (so it doesn't garble the spinner) and always
+prints it once cfv finishes, but never keeps it. This has two consequences:
 - There is no audit trail of what cfv.bat reported for each directory.
-- If cfv.bat outputs sensitive path information or error details on stderr, it
-  is displayed without any filtering.
+- If cfv.bat outputs sensitive path information or error details, it is
+  displayed without any filtering.
 
 The script also cannot distinguish between different cfv.bat failure modes; it
 only sees a non-zero return code.
 
-**Fix:** Capture output and log or display it under the `--verbose` flag:
-```python
-result = subprocess.run([CFV_BAT, *args], cwd=dir_path,
-                        capture_output=True, text=True, timeout=300)
-if verbose or result.returncode != 0:
-    click.echo(result.stdout)
-    if result.stderr:
-        click.echo(result.stderr, err=True)
-```
+**Fix:** Keep the captured output (e.g. in a log file), and show it only on
+failure or under the `--verbose` flag.
 
 ### SEC-7 [LOW] — Debug command exposes internal context object
-`check-context-object` dumps the complete `ctx.obj` dict to stdout via `pprint`.
+`check-context-object` dumps the complete `ctx.obj` dict to stdout via rich's `pprint`.
 Currently `ctx.obj` only holds `dir_path`, `verbose` and `force_mode`, but if the
 context is ever extended (e.g. to carry credentials, API tokens, or other sensitive
 configuration), this command will leak them verbatim. The command should either be
@@ -190,8 +182,8 @@ class CliContext:
 ## Low Priority (Cleanup / Polish)
 
 ### 10. Fix redundant/misleading verbose output in `generate-cfv-files`
-The verbose block at the end of the nested branch of `generateCfvFiles` is outside
-the `with` block and has two problems:
+The verbose block at the end of the nested branch of `generateCfvFiles` has two
+problems:
 - When files were generated, it re-prints the count that the summary already printed.
 - When no files were generated, it would print "Generated cfv checksums for 0
   directories" — confusing given the message above says nothing was generated.
@@ -205,7 +197,3 @@ output. Keep only the prose description.
 In `checkForMissingCfvFiles`, the comment above `dirPath = ctx.obj[DIR_PATH_ARG]`
 has the typo "directoryu" (should be "directory"); the full comment is also
 redundant given the variable name.
-
-### 13. Move `pprint` import to the one place it is used
-`pprint` is only used in the debug `check-context-object` command. Move it to a
-local import inside that function rather than cluttering the module-level imports.
