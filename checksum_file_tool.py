@@ -16,6 +16,7 @@
 # Usage with uv:
 #   uv run checksum_file_tool.py [OPTIONS] DIR_PATH COMMAND [ARGS]...
 #   uv run checksum_file_tool.py --help
+#   uv run checksum_file_tool.py --version
 #   uv run checksum_file_tool.py -v D:\Archive check-4-missing-cfv-files
 #   uv run checksum_file_tool.py D:\Archive generate-cfv-files
 #   uv run checksum_file_tool.py D:\Archive verify-cfv-files
@@ -33,6 +34,11 @@ import sys
 from pathlib import Path
 
 import click
+
+# The one place the version is set; --version and pyproject.toml (dynamic
+# version) both take it from here. Follows Semantic Versioning, see the
+# "Versioning" section in README.md for what counts as a major/minor/patch change.
+__version__ = "0.3.0"
 
 CFV_BAT = "C:\\Windows\\cfv.bat"
 DIR_PATH_ARG = "dir_path"
@@ -222,7 +228,7 @@ def resolve_mode(ctx):
 
 @click.group()
 @click.pass_context
-@click.version_option("0.3.0", prog_name="checksum_file_tool")
+@click.version_option(__version__, prog_name="checksum_file_tool")
 @click.option("-v", "--verbose", is_flag=True, help="Display verbose output")
 @click.option(
     "--flat",

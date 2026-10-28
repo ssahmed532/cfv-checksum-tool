@@ -37,6 +37,12 @@ Single-file CLI (`checksum_file_tool.py`) built with [Click](https://click.palle
 
 **External dependency**: `C:\Windows\cfv.bat` must be installed separately. This tool will not run on non-Windows systems.
 
+## Versioning
+
+- Semantic Versioning; the bump rules and what counts as the public interface (commands, options, exit codes, `.sha1` naming, detected mode) are in README.md "Versioning".
+- The version lives **only** in `__version__` in `checksum_file_tool.py`. `click.version_option` reads it and `pyproject.toml` declares `dynamic = ["version"]`. Never hard-code the version anywhere else, including docs (use `X.Y.Z` in examples).
+- Bumps go in their own commit: `Bump version to X.Y.Z`.
+
 ## Constraints
 
 - Windows-only (hardcoded `cfv.bat` path, Windows path conventions).

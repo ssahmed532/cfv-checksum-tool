@@ -28,10 +28,17 @@ Options go **before** `DIR_PATH`.
 | `-v`, `--verbose` | Show per-directory status during scan (nested mode) |
 | `--flat` | Treat `DIR_PATH` as one folder with one checksum file; skips auto-detection |
 | `--nested` | Give each sub-directory of `DIR_PATH` its own checksum file; skips auto-detection |
-| `--version` | Show version and exit |
+| `--version` | Print the version and exit (doesn't need `DIR_PATH`) |
 | `--help` | Show help and exit |
 
 `--flat` and `--nested` can't be combined. Without either, the mode is [detected automatically](#how-the-mode-is-detected).
+
+To check which version you have:
+
+```
+uv run checksum_file_tool.py --version
+checksum_file_tool, version X.Y.Z
+```
 
 ### Commands
 
@@ -254,6 +261,39 @@ In PowerShell, capturing with `2>&1` into a variable or pipeline reads stdout an
 
 - Only the layout directly inside `DIR_PATH` is used for detection; sub-directories of sub-directories are not inspected.
 - cfv's own messages (e.g. `crc does not match`, `Permission denied`, or a cfv traceback when a directory can't be listed) are passed through unchanged.
+
+## Versioning
+
+This tool follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`).
+
+The version is set in exactly one place: `__version__` near the top of `checksum_file_tool.py`. Everything else takes it from there. `--version` prints it, and `pyproject.toml` declares the version as `dynamic` instead of repeating it.
+
+### Public interface
+
+Semantic Versioning is judged against what scripts and users depend on:
+
+- command names, options and the `DIR_PATH` argument;
+- exit codes;
+- the checksum file name and location (`<folder>\<folder>.sha1`);
+- which mode a given folder layout is detected as.
+
+The wording of messages is **not** part of the public interface.
+
+### Which number to bump
+
+| Change | Bump | Examples |
+|---|---|---|
+| Breaks existing usage or scripts | MAJOR | Removing or renaming a command or option; changing an exit code's meaning; changing the checksum file naming; detecting an existing layout as a different mode |
+| Adds something without breaking existing usage | MINOR | A new command or option; a new layout that used to be an error and now works |
+| Fixes a bug without changing the interface | PATCH | Fixing a crash; fixing a wrong message; making an incorrect exit code match the documented one |
+
+While the version is `0.y.z`, the tool is still in initial development, as Semantic Versioning allows. Breaking changes bump MINOR and everything else bumps PATCH. Version `1.0.0` marks the interface above as stable.
+
+### Releasing a new version
+
+1. Change `__version__` in `checksum_file_tool.py`. Don't put the version anywhere else.
+2. Check it: `uv run checksum_file_tool.py --version`.
+3. Commit only that change as `Bump version to X.Y.Z`.
 
 ## License
 
