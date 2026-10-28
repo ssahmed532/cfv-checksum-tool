@@ -291,9 +291,45 @@ While the version is `0.y.z`, the tool is still in initial development, as Seman
 
 ### Releasing a new version
 
-1. Change `__version__` in `checksum_file_tool.py`. Don't put the version anywhere else.
-2. Check it: `uv run checksum_file_tool.py --version`.
-3. Commit only that change as `Bump version to X.Y.Z`.
+v0.3.0 is the first published release; earlier versions were never tagged or released. Every release from v0.3.0 on follows these steps. Run the commands in Git Bash from the repository root, with `master` up to date and a clean working tree. Replace `X.Y.Z` with the new version.
+
+1. **Decide the version.** Use the [table above](#which-number-to-bump). Changes that don't touch the public interface or the tool's behaviour (docs, comments) don't need a release.
+2. **Set it.** Change `__version__` in `checksum_file_tool.py`, and nothing else. Check it:
+   ```
+   uv run checksum_file_tool.py --version
+   ```
+3. **Commit and push the bump.** Commit only that change as `Bump version to X.Y.Z`, then push:
+   ```
+   git push origin master
+   ```
+4. **Tag the bump commit and push the tag.** Tags are annotated and named `v` plus the exact version:
+   ```
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+5. **Build the release asset from the tag.** Extract the script from the tag rather than copying the working copy, so the asset is exactly what was tagged. Then confirm it is byte-identical and get its SHA-256:
+   ```
+   mkdir -p dist
+   git show vX.Y.Z:checksum_file_tool.py > dist/checksum_file_tool.py
+   test "$(git hash-object dist/checksum_file_tool.py)" = "$(git rev-parse vX.Y.Z:checksum_file_tool.py)" && echo "asset matches tag"
+   sha256sum dist/checksum_file_tool.py
+   ```
+   `dist/` is gitignored. Don't use `git show --output=…`: for a file it writes an empty file. In Windows PowerShell 5.1, `>` writes UTF-16 and changes the file; the `git hash-object` check catches both.
+6. **Write the release notes** in a file outside the repository, using the [v0.3.0 release](https://github.com/ssahmed532/cfv-checksum-tool/releases/tag/v0.3.0) as the template. List breaking changes first under their own heading. Then list what was added and fixed since the previous release, and the asset's SHA-256 from step 5.
+7. **Publish the GitHub release** with the asset attached:
+   ```
+   gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <notes file> dist/checksum_file_tool.py
+   ```
+   `--verify-tag` stops it from creating a tag on the fly if step 4 was missed. For a pre-release version such as `1.0.0-rc.1`, add `--prerelease`.
+8. **Verify the published asset** by downloading it and comparing its SHA-256 with step 5:
+   ```
+   d=$(mktemp -d) && gh release download vX.Y.Z -p checksum_file_tool.py -D "$d" && sha256sum "$d/checksum_file_tool.py"
+   ```
+
+Rules for every release:
+
+- A tag `vX.Y.Z` always points at a commit whose `--version` prints `X.Y.Z`.
+- Never move, delete or reuse a published tag, and never replace a published asset. Fix a bad release with a new PATCH release.
 
 ## License
 

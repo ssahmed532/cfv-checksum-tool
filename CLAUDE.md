@@ -42,6 +42,7 @@ Single-file CLI (`checksum_file_tool.py`) built with [Click](https://click.palle
 - Semantic Versioning; the bump rules and what counts as the public interface (commands, options, exit codes, `.sha1` naming, detected mode) are in README.md "Versioning".
 - The version lives **only** in `__version__` in `checksum_file_tool.py`. `click.version_option` reads it and `pyproject.toml` declares `dynamic = ["version"]`. Never hard-code the version anywhere else, including docs (use `X.Y.Z` in examples).
 - Bumps go in their own commit: `Bump version to X.Y.Z`.
+- Releases follow README.md "Releasing a new version" exactly: annotated `vX.Y.Z` tag on the bump commit, GitHub release via `gh release create --verify-tag` with `checksum_file_tool.py` extracted from the tag (checked with `git hash-object`) and its SHA-256 in the notes. Never move/delete a published tag or replace an asset; fix with a PATCH release. Tag, push and release only when explicitly asked.
 
 ## Constraints
 
