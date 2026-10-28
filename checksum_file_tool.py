@@ -222,7 +222,7 @@ def resolve_mode(ctx):
 
 @click.group()
 @click.pass_context
-@click.version_option("0.2.0", prog_name="checksum_file_tool")
+@click.version_option("0.3.0", prog_name="checksum_file_tool")
 @click.option("-v", "--verbose", is_flag=True, help="Display verbose output")
 @click.option(
     "--flat",
