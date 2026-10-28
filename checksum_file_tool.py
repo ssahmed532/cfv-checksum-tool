@@ -45,7 +45,7 @@ from rich.text import Text
 # The one place the version is set; --version and pyproject.toml (dynamic
 # version) both take it from here. Follows Semantic Versioning, see the
 # "Versioning" section in README.md for what counts as a major/minor/patch change.
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 CFV_BAT = "C:\\Windows\\cfv.bat"
 DIR_PATH_ARG = "dir_path"
